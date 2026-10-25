@@ -353,3 +353,38 @@ outbox_messages       id PK, aggregate_id, event_type, payload jsonb,
 - **Partidas dobradas:** ledger simples por wallet.
 - **Teste de carga:** não faremos.
 - **Multi-moeda real:** modelo suporta, usamos só `BRL`; conflito de moeda é testado.
+
+---
+
+## 14. Mapa dos testes obrigatórios (README §13)
+
+Todos contra **PostgreSQL e LocalStack reais** (nada mockado na persistência ou na fila).
+Invariante final conferida no banco depois de cada teste de integração:
+`wallet.balance == soma do ledger` (`expectLedgerConsistent`).
+
+| Exigência | Onde |
+|---|---|
+| `Money`: escala, arredondamento, entradas inválidas, conflito de moeda | `test/unit/domain/money.test.ts` |
+| Invariantes da `Wallet`; regras de BET/WIN/LOSS/REFUND/ROLLBACK | `test/unit/domain/*.test.ts` |
+| Idempotency key com payload divergente | `process-wager.test.ts`, `http-api.test.ts` |
+| Migrations (reversíveis) e constraints | `migrations.test.ts`, `schema-constraints.test.ts` |
+| Atomicidade wallet + ledger + inbox + outbox | `outbox.test.ts` (falha na outbox desfaz o débito) |
+| Inbox e redelivery | `sqs-consumer.test.ts` |
+| Publishers concorrentes na mesma outbox | `outbox.test.ts` (3 relays, 60 eventos, cada um 1×) |
+| Retry e DLQ | `sqs-consumer.test.ts` |
+| 1. Mesma aposta 50× em paralelo | `concurrency.test.ts` (+ 30× em 3 processos) |
+| 2. Disputa de saldo (100 → 80 + 80) | `concurrency.test.ts` (+ em 2 processos) |
+| 3. Wallets distintas em paralelo | `concurrency.test.ts` |
+| 4. ≥ 3 processos simultâneos | `test/multi-instance/` (processos `bun run src/main.ts` reais) |
+| 5. Worker morto depois do commit e antes do ack | `sqs-consumer.test.ts` (determinístico) + `multi-instance` (SIGKILL real) |
+| 6. Dois publishers sobre a mesma outbox | `outbox.test.ts` |
+| 7. ROLLBACK/REFUND antes da referência | `pending-reference.test.ts`, `multi-instance` |
+| 8. Reinício com comprovação da consistência final | `multi-instance` (derruba tudo, sobe 3 novas, reconcilia) |
+
+**Prova de que os testes pegam o bug** (feita manualmente): sem o `FOR UPDATE` os testes de
+concorrência falham (o compare-and-set da `version` aborta); sem o `SKIP LOCKED` o teste
+de publishers concorrentes falha (evento publicado mais de uma vez).
+
+**Limitação:** no Windows, enviar SIGTERM a um processo filho equivale a matá-lo
+(TerminateProcess), então o *graceful shutdown* é testado dentro do processo
+(`consumer.stop()`), e os testes multi-processo usam SIGKILL — o pior caso.

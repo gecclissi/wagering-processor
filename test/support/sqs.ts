@@ -19,23 +19,27 @@ export const sqs = new SQSClient({
 export interface TestQueues {
   queueUrl: string;
   dlqUrl: string;
+  queueName: string;
+  dlqName: string;
   destroy(): Promise<void>;
 }
 
-export async function createTestQueues(maxReceiveCount = 3): Promise<TestQueues> {
+export async function createTestQueues(maxReceiveCount = 3, visibilityTimeoutSeconds = 30): Promise<TestQueues> {
   const suffix = crypto.randomUUID().slice(0, 8);
+  const queueName = `test-wager-${suffix}.fifo`;
+  const dlqName = `test-dlq-${suffix}.fifo`;
   const { QueueUrl: dlqUrl } = await sqs.send(
-    new CreateQueueCommand({ QueueName: `test-dlq-${suffix}.fifo`, Attributes: { FifoQueue: 'true' } }),
+    new CreateQueueCommand({ QueueName: dlqName, Attributes: { FifoQueue: 'true' } }),
   );
   const { Attributes } = await sqs.send(
     new GetQueueAttributesCommand({ QueueUrl: dlqUrl, AttributeNames: ['QueueArn'] }),
   );
   const { QueueUrl: queueUrl } = await sqs.send(
     new CreateQueueCommand({
-      QueueName: `test-wager-${suffix}.fifo`,
+      QueueName: queueName,
       Attributes: {
         FifoQueue: 'true',
-        VisibilityTimeout: '30',
+        VisibilityTimeout: String(visibilityTimeoutSeconds),
         RedrivePolicy: JSON.stringify({ deadLetterTargetArn: Attributes!.QueueArn, maxReceiveCount }),
       },
     }),
@@ -43,6 +47,8 @@ export async function createTestQueues(maxReceiveCount = 3): Promise<TestQueues>
   return {
     queueUrl: queueUrl!,
     dlqUrl: dlqUrl!,
+    queueName,
+    dlqName,
     async destroy() {
       await sqs.send(new DeleteQueueCommand({ QueueUrl: queueUrl }));
       await sqs.send(new DeleteQueueCommand({ QueueUrl: dlqUrl }));
@@ -78,13 +84,12 @@ export async function peek(queueUrl: string) {
 }
 
 export async function createFifoQueue(prefix: string) {
+  const name = `${prefix}-${crypto.randomUUID().slice(0, 8)}.fifo`;
   const { QueueUrl } = await sqs.send(
-    new CreateQueueCommand({
-      QueueName: `${prefix}-${crypto.randomUUID().slice(0, 8)}.fifo`,
-      Attributes: { FifoQueue: 'true' },
-    }),
+    new CreateQueueCommand({ QueueName: name, Attributes: { FifoQueue: 'true' } }),
   );
   return {
+    name,
     url: QueueUrl!,
     destroy: () => sqs.send(new DeleteQueueCommand({ QueueUrl })),
   };

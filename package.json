@@ -10,6 +10,7 @@
     "test": "bun test",
     "test:unit": "bun test test/unit",
     "test:integration": "bun test test/integration",
+    "test:multi": "bun test test/multi-instance",
     "infra:up": "docker compose up -d --wait",
     "infra:down": "docker compose down -v",
     "migration:up": "bun run src/infrastructure/persistence/migrate.ts up",
