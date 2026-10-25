@@ -9,7 +9,10 @@ import { TEST_DATABASE_URL, createTestDatabase } from './database';
 export async function startHttpApp() {
   await createTestDatabase();
   const app: INestApplication = await NestFactory.create(
-    AppModule.register({ databaseUrl: TEST_DATABASE_URL }),
+    AppModule.register({
+      databaseUrl: TEST_DATABASE_URL,
+      sqsConsumer: { enabled: false, queueName: '', dlqName: '' },
+    }),
     { logger: false },
   );
   await app.listen(0);

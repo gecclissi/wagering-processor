@@ -11,10 +11,13 @@ import {
   WalletAlreadyExistsError,
 } from '../../application/errors';
 import type {
+  InboxRegistration,
+  InboxRepository,
   LedgerRepository,
   WagerTransactionRepository,
   WalletRepository,
 } from '../../application/ports';
+import { InboxMessage } from '../../domain/messaging/inbox-message';
 import type { WagerTransaction } from '../../domain/wager/wager-transaction';
 import type { Wallet } from '../../domain/wallet/wallet';
 import type { WalletLedgerEntry } from '../../domain/wallet/wallet-ledger-entry';
@@ -138,6 +141,44 @@ export class MikroOrmWagerTransactionRepository implements WagerTransactionRepos
     // um lock, precisamos ver o que OUTRA transação acabou de commitar.
     const record = await this.em.findOne(WagerTransactionRecord, where, { refresh: true });
     return record ? WagerTransactionMapper.toDomain(record) : undefined;
+  }
+}
+
+export class MikroOrmInboxRepository implements InboxRepository {
+  constructor(private readonly em: EntityManager) {}
+
+  async register(message: InboxMessage): Promise<InboxRegistration> {
+    // ON CONFLICT DO NOTHING em vez de capturar erro de UNIQUE: no PostgreSQL um
+    // erro aborta a transação inteira; assim ela continua utilizável.
+    // Se outra transação estiver inserindo a mesma chave AGORA, este INSERT
+    // espera ela terminar — por isso duas entregas simultâneas não passam juntas.
+    const inserted = await this.em.execute<{ message_id: string }[]>(
+      `insert into inbox_messages (consumer_name, message_id, payload_hash, received_at, processed_at)
+       values (?, ?, ?, ?, ?)
+       on conflict (consumer_name, message_id) do nothing
+       returning message_id`,
+      [message.consumerName, message.messageId, message.payloadHash, message.receivedAt, message.processedAt ?? null],
+    );
+    if (inserted.length > 0) return { status: 'registered' };
+
+    const [row] = await this.em.execute<
+      { payload_hash: string; received_at: Date; processed_at: Date | null }[]
+    >(
+      `select payload_hash, received_at, processed_at from inbox_messages
+        where consumer_name = ? and message_id = ?`,
+      [message.consumerName, message.messageId],
+    );
+    if (!row) throw new Error(`Inbox conflict for ${message.messageId} but row not found`);
+    return {
+      status: 'duplicate',
+      existing: InboxMessage.rehydrate({
+        messageId: message.messageId,
+        consumerName: message.consumerName,
+        payloadHash: row.payload_hash,
+        receivedAt: row.received_at,
+        processedAt: row.processed_at ?? undefined,
+      }),
+    };
   }
 }
 

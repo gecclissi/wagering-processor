@@ -1,5 +1,5 @@
-import { InvalidPayloadError } from '../../domain/shared/domain-error';
-import type { MoneyProps } from '../../domain/shared/money';
+import { InvalidPayloadError } from '../domain/shared/domain-error';
+import type { MoneyProps } from '../domain/shared/money';
 
 // Validação de FORMA do JSON (tipos e campos obrigatórios). As regras de
 // conteúdo (escala do dinheiro, kind válido, referência obrigatória...) são do

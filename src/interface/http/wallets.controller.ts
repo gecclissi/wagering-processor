@@ -7,7 +7,7 @@ import { ProviderAuthGuard } from './auth.guard';
 import { decodeCursor, encodeCursor } from './cursor';
 import { presentLedgerEntry } from './presenters';
 import { WALLET_READS } from './tokens';
-import { parseLimit, requireMoney, requireObject, requireString } from './validation';
+import { parseLimit, requireMoney, requireObject, requireString } from '../validation';
 
 @Controller('wallets')
 @UseGuards(ProviderAuthGuard)

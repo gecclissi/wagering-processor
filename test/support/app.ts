@@ -26,6 +26,9 @@ export async function createTestApp() {
   return {
     orm,
     sql,
+    uow,
+    ids,
+    clock,
     openWallet: new OpenWalletUseCase(uow, ids, clock),
     processWager: new ProcessWagerTransactionUseCase(uow, ids, clock),
     async close() {

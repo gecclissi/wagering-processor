@@ -34,6 +34,15 @@ export class IdempotencyConflictError extends DomainError {
   }
 }
 
+/** Mesmo messageId da fila com conteúdo diferente: erro do produtor, não redelivery. */
+export class MessageIdConflictError extends DomainError {
+  readonly code = FailureCode.MessageIdConflict;
+
+  constructor(messageId: string) {
+    super(`Message "${messageId}" was already received with a different payload`);
+  }
+}
+
 /**
  * Sinal interno dos repositórios: o INSERT bateu numa UNIQUE de idempotência
  * (idempotency_key ou provider + id externo). Uma requisição gêmea venceu a corrida.

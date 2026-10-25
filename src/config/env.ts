@@ -18,6 +18,8 @@ export const env = {
   },
   sqs: {
     wagerQueue: process.env.SQS_WAGER_QUEUE ?? 'wager-transactions.fifo',
+    wagerDlq: process.env.SQS_WAGER_DLQ ?? 'wager-transactions-dlq.fifo',
     eventsQueue: process.env.SQS_EVENTS_QUEUE ?? 'wagering-events.fifo',
+    consumerEnabled: (process.env.SQS_CONSUMER_ENABLED ?? 'true') === 'true',
   },
 } as const;

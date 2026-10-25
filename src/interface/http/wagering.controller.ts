@@ -9,7 +9,7 @@ import { ProviderAuthGuard } from './auth.guard';
 import { statusForTransaction } from './error-mapping';
 import { presentTransaction, presentWagerResult } from './presenters';
 import { WALLET_READS } from './tokens';
-import { optionalString, requireMoney, requireObject, requireString } from './validation';
+import { optionalString, requireMoney, requireObject, requireString } from '../validation';
 
 class MissingIdempotencyKeyError extends DomainError {
   readonly code = FailureCode.MissingIdempotencyKey;

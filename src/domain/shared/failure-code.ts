@@ -18,6 +18,7 @@ export const FailureCode = {
   TransactionNotFound: 'TRANSACTION_NOT_FOUND',
   WalletAlreadyExists: 'WALLET_ALREADY_EXISTS',
   IdempotencyConflict: 'IDEMPOTENCY_CONFLICT', // mesma key (ou mesmo id externo) com payload diferente
+  MessageIdConflict: 'MESSAGE_ID_CONFLICT', // mesmo messageId da fila com conteúdo diferente
 
   // ---- Regra de negócio → terminal, não adianta reenviar igual
   CurrencyMismatch: 'CURRENCY_MISMATCH',

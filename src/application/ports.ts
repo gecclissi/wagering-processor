@@ -1,3 +1,4 @@
+import type { InboxMessage } from '../domain/messaging/inbox-message';
 import type { Money } from '../domain/shared/money';
 import type { WagerTransaction } from '../domain/wager/wager-transaction';
 import type { Wallet } from '../domain/wallet/wallet';
@@ -31,11 +32,24 @@ export interface LedgerRepository {
   append(entry: WalletLedgerEntry): Promise<void>;
 }
 
+export type InboxRegistration =
+  | { status: 'registered' }
+  | { status: 'duplicate'; existing: InboxMessage };
+
+export interface InboxRepository {
+  /**
+   * Tenta registrar a mensagem. Se outra transação estiver registrando a mesma
+   * mensagem agora, ESPERA ela terminar: commit → 'duplicate'; rollback → 'registered'.
+   */
+  register(message: InboxMessage): Promise<InboxRegistration>;
+}
+
 /** Repositórios que compartilham UMA transação SQL. */
 export interface TransactionContext {
   wallets: WalletRepository;
   transactions: WagerTransactionRepository;
   ledger: LedgerRepository;
+  inbox: InboxRepository;
 }
 
 /** Executa `work` dentro de uma transação: commit se terminar, rollback se lançar. */

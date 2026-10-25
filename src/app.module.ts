@@ -9,7 +9,12 @@ import {
   ReconcileWalletUseCase,
   type ReconciliationAlert,
 } from './application/wallets/reconcile-wallet.use-case';
-import { sqsClientProvider } from './infrastructure/messaging/sqs.client';
+import type { SQSClient } from '@aws-sdk/client-sqs';
+import { SQS_CLIENT, sqsClientProvider } from './infrastructure/messaging/sqs.client';
+import {
+  SqsConsumerService,
+  type SqsConsumerServiceOptions,
+} from './interface/messaging/sqs-consumer.service';
 import { createMikroOrmConfig } from './infrastructure/persistence/mikro-orm.config';
 import { MikroOrmWalletReadRepository } from './infrastructure/persistence/mikro-orm.read-repository';
 import { MikroOrmUnitOfWork } from './infrastructure/persistence/mikro-orm.unit-of-work';
@@ -24,6 +29,8 @@ import { WalletsController } from './interface/http/wallets.controller';
 
 export interface AppOptions {
   databaseUrl: string;
+  /** Liga o consumer da fila. Testes HTTP desligam para não consumir a fila de desenvolvimento. */
+  sqsConsumer: SqsConsumerServiceOptions;
 }
 
 /**
@@ -68,6 +75,13 @@ export class AppModule {
           inject: [UNIT_OF_WORK, ID_GENERATOR, CLOCK],
           useFactory: (uow: UnitOfWork, ids: IdGenerator, clock: Clock) =>
             new ProcessWagerTransactionUseCase(uow, ids, clock),
+        },
+        // ---- entrada pela fila: MESMO use case da entrada HTTP
+        {
+          provide: SqsConsumerService,
+          inject: [SQS_CLIENT, ProcessWagerTransactionUseCase, CLOCK],
+          useFactory: (sqs: SQSClient, processWager: ProcessWagerTransactionUseCase, clock: Clock) =>
+            new SqsConsumerService(sqs, processWager, clock, options.sqsConsumer),
         },
         {
           provide: ReconcileWalletUseCase,

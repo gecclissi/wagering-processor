@@ -3,6 +3,7 @@ import type { EntityManager } from '@mikro-orm/postgresql';
 import { TransientError } from '../../application/errors';
 import type { TransactionContext, UnitOfWork } from '../../application/ports';
 import {
+  MikroOrmInboxRepository,
   MikroOrmLedgerRepository,
   MikroOrmWagerTransactionRepository,
   MikroOrmWalletRepository,
@@ -29,6 +30,7 @@ export class MikroOrmUnitOfWork implements UnitOfWork {
           wallets: new MikroOrmWalletRepository(em),
           transactions: new MikroOrmWagerTransactionRepository(em),
           ledger: new MikroOrmLedgerRepository(em),
+          inbox: new MikroOrmInboxRepository(em),
         });
       });
     } catch (error) {

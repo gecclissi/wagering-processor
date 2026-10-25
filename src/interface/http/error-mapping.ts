@@ -30,6 +30,7 @@ const STATUS_BY_CODE: Record<FailureCode, HttpStatus> = {
 
   [FailureCode.WalletAlreadyExists]: HttpStatus.CONFLICT,
   [FailureCode.IdempotencyConflict]: HttpStatus.CONFLICT,
+  [FailureCode.MessageIdConflict]: HttpStatus.CONFLICT,
 
   [FailureCode.CurrencyMismatch]: HttpStatus.UNPROCESSABLE_ENTITY,
   [FailureCode.WalletMismatch]: HttpStatus.UNPROCESSABLE_ENTITY,

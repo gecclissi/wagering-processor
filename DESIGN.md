@@ -219,15 +219,34 @@ Transações rejeitadas também são **persistidas** (auditáveis) e geram event
 ## 10. Mensageria
 
 **Inbox (entrada SQS):** tabela `inbox_messages` com
-`PRIMARY KEY (consumer_name, message_id)`. Inserida na mesma transação; se já
-existe, a mensagem é duplicata → ack sem reprocessar.
+`PRIMARY KEY (consumer_name, message_id)`, gravada **na mesma transação SQL** do
+efeito financeiro (`ProcessWagerTransactionUseCase.execute(cmd, { inbox })` — o
+mesmo use case do HTTP). Se o registro existe, o efeito existe.
+- `INSERT ... ON CONFLICT DO NOTHING RETURNING`: sem erro (que abortaria a transação)
+  e, se outra entrega da mesma mensagem estiver em andamento, o INSERT **espera** ela
+  terminar — commit → duplicata; rollback → segue normalmente.
+- Duplicata → devolve o resultado original e faz ack, sem travar a wallet.
+- Mesmo `messageId` com conteúdo diferente (hash do envelope canônico) → `MESSAGE_ID_CONFLICT`.
+- Inbox **e** idempotency key: a inbox deduplica a *entrega* (mensagem), a key
+  deduplica a *operação* (a mesma operação pode chegar por HTTP e por fila).
 
-**Consumer SQS:**
-- erro de negócio → transação `REJECTED` gravada, **ack**;
-- erro transitório (banco fora) → **não** faz ack, a mensagem volta
-  (visibility timeout) e é tentada de novo;
-- excedeu `maxReceiveCount` → SQS manda para `wager-transactions-dlq.fifo`;
-- `SIGTERM` → para de buscar mensagens, termina as em andamento.
+**Consumer SQS** (`interface/messaging/sqs-wager-consumer.ts`) — classificação:
+
+| Resultado | Ação | Por quê |
+|---|---|---|
+| `PROCESSED`, `REJECTED`, `PENDING_REFERENCE` | **ack** (delete) após o commit | o banco já tem o registro; `PENDING_REFERENCE` segue pelo worker |
+| `DomainError` lançado (payload inválido, wallet inexistente, conflito) | **DLQ imediata** + delete | nada foi gravado e repetir dá o mesmo erro; a DLQ preserva para auditoria, com `failureReason` |
+| `TransientError` ou erro inesperado | **não** faz ack; `ChangeMessageVisibility` com backoff exponencial (2s, 4s… até 60s) | depois de `maxReceiveCount = 5` recebimentos, a *redrive policy* do SQS move para a DLQ |
+
+- **Ack só depois do commit:** o `delete` acontece quando o use case retornou.
+  Morrer entre commit e ack → redelivery → inbox reconhece → ack. Sem duplicar.
+- **Ordem:** mensagens do mesmo `MessageGroupId` (a wallet) em sequência; grupos
+  diferentes em paralelo. Ordenação é otimização — o lock e a inbox garantem a correção.
+- **DLQ manual idempotente:** `MessageDeduplicationId` = id SQS original (crash entre
+  `send` e `delete` não duplica na DLQ dentro da janela de 5 min).
+- **SIGTERM:** `beforeApplicationShutdown` (antes de o MikroORM fechar) → para o long
+  polling (abort), espera as mensagens em andamento até 10s; o que sobrar volta para a
+  fila com `visibility = 0` para outra instância pegar na hora.
 
 **Outbox (saída):** tabela `outbox_messages` gravada na mesma transação.
 O `OutboxPublisher` roda em todas as instâncias:
