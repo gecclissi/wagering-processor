@@ -1,3 +1,4 @@
+import type { Money } from '../domain/shared/money';
 import type { WagerTransaction } from '../domain/wager/wager-transaction';
 import type { Wallet } from '../domain/wallet/wallet';
 import type { WalletLedgerEntry } from '../domain/wallet/wallet-ledger-entry';
@@ -40,6 +41,30 @@ export interface TransactionContext {
 /** Executa `work` dentro de uma transação: commit se terminar, rollback se lançar. */
 export interface UnitOfWork {
   run<T>(work: (ctx: TransactionContext) => Promise<T>): Promise<T>;
+}
+
+// ---- Lado de leitura (consultas da API). Não trava nada.
+
+export interface LedgerPage {
+  entries: WalletLedgerEntry[];
+  /** Posição (seq) do último lançamento da página; ausente se não há mais. */
+  nextSeq: string | undefined;
+}
+
+export interface ReconciliationSnapshot {
+  storedBalance: Money;
+  calculatedBalance: Money;
+  checkedEntries: number;
+}
+
+export interface WalletReadRepository {
+  findWallet(id: string): Promise<Wallet | undefined>;
+  /** Lançamentos em ordem cronológica (seq crescente), a partir de `afterSeq` (exclusivo). */
+  listLedger(walletId: string, afterSeq: string | undefined, limit: number): Promise<LedgerPage>;
+  findTransaction(id: string): Promise<WagerTransaction | undefined>;
+  findTransactionByExternalId(providerId: string, externalTransactionId: string): Promise<WagerTransaction | undefined>;
+  /** Saldo gravado e saldo recalculado do ledger, lidos do MESMO snapshot. */
+  reconcile(walletId: string): Promise<ReconciliationSnapshot | undefined>;
 }
 
 export interface Clock {

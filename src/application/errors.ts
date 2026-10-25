@@ -9,6 +9,14 @@ export class WalletNotFoundError extends DomainError {
   }
 }
 
+export class TransactionNotFoundError extends DomainError {
+  readonly code = FailureCode.TransactionNotFound;
+
+  constructor(reference: string) {
+    super(`Transaction ${reference} not found`);
+  }
+}
+
 export class WalletAlreadyExistsError extends DomainError {
   readonly code = FailureCode.WalletAlreadyExists;
 

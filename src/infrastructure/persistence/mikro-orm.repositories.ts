@@ -20,6 +20,7 @@ import type { Wallet } from '../../domain/wallet/wallet';
 import type { WalletLedgerEntry } from '../../domain/wallet/wallet-ledger-entry';
 import { LedgerEntryMapper, WagerTransactionMapper, WalletMapper } from './mappers';
 import { LedgerEntryRecord, WagerTransactionRecord, WalletRecord } from './records';
+import { isUuid } from './uuid';
 
 // Repositórios sobre o EntityManager de UMA transação (o `em` vem do UnitOfWork).
 // Escritas são comandos explícitos (insert / nativeUpdate) em ordem conhecida:
@@ -40,6 +41,7 @@ export class MikroOrmWalletRepository implements WalletRepository {
   constructor(private readonly em: EntityManager) {}
 
   async findById(id: string): Promise<Wallet | undefined> {
+    if (!isUuid(id)) return undefined;
     const record = await this.em.findOne(WalletRecord, { id });
     return record ? WalletMapper.toDomain(record) : undefined;
   }
@@ -47,6 +49,7 @@ export class MikroOrmWalletRepository implements WalletRepository {
   async findByIdForUpdate(id: string): Promise<Wallet | undefined> {
     // SELECT ... FOR UPDATE: a linha fica travada até o COMMIT/ROLLBACK.
     // Outra instância que pedir a mesma wallet espera; wallets diferentes não.
+    if (!isUuid(id)) return undefined;
     const record = await this.em
       .findOne(WalletRecord, { id }, { lockMode: LockMode.PESSIMISTIC_WRITE, refresh: true })
       .catch(translateTransient);
@@ -86,6 +89,7 @@ export class MikroOrmWagerTransactionRepository implements WagerTransactionRepos
   constructor(private readonly em: EntityManager) {}
 
   async findById(id: string): Promise<WagerTransaction | undefined> {
+    if (!isUuid(id)) return undefined;
     return this.findOne({ id });
   }
 

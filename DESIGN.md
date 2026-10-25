@@ -189,13 +189,28 @@ Reversão que deixaria saldo negativo → `REVERSAL_INSUFFICIENT_FUNDS`
 
 | Situação | Exemplo de code | HTTP | Provedor deve... |
 |---|---|---|---|
-| Payload inválido | `INVALID_PAYLOAD`, `INVALID_AMOUNT` | 400 | corrigir |
-| Recurso não existe | `WALLET_NOT_FOUND` | 404 | corrigir |
-| Conflito de idempotência | `IDEMPOTENCY_CONFLICT` | 409 | não reenviar igual |
-| Regra de negócio | `INSUFFICIENT_FUNDS`, `CURRENCY_MISMATCH`, `REFERENCE_MISMATCH`, `ALREADY_REVERSED`, `REFERENCE_NOT_FOUND`, ... | 422 | desistir |
+| Payload inválido | `INVALID_PAYLOAD`, `INVALID_AMOUNT`, `INVALID_KIND`, `MISSING_REFERENCE`, `MISSING_IDEMPOTENCY_KEY`, `INVALID_CURSOR` | 400 | corrigir antes de reenviar |
+| Recurso não existe | `WALLET_NOT_FOUND`, `TRANSACTION_NOT_FOUND` | 404 | corrigir a referência |
+| Conflito | `IDEMPOTENCY_CONFLICT`, `WALLET_ALREADY_EXISTS` | 409 | não reenviar igual |
+| Rejeição por regra (transação **gravada**) | `INSUFFICIENT_FUNDS`, `ALREADY_REVERSED`, `REFERENCE_NOT_FOUND`, ... | 422 | desistir; reenvio devolve a mesma rejeição |
 | Aceita, pendente | status `PENDING_REFERENCE` | 202 | aguardar |
-| Sucesso | status `PROCESSED` | 200 (replay) / 201 | — |
-| Falha transitória | `DB_UNAVAILABLE` | 503 | reenviar depois |
+| Aplicada | status `PROCESSED` | 200 | — |
+| Falha transitória | `TEMPORARILY_UNAVAILABLE` + `Retry-After` | 503 | reenviar com a **mesma** key |
+| Bug | `INTERNAL_ERROR` | 500 | — |
+
+Decisões:
+
+- **Uma única tabela** (`interface/http/error-mapping.ts`) mapeia code → status para todos os
+  endpoints. É um `Record<FailureCode, HttpStatus>`: criar um code novo sem status é erro de compilação.
+- **Replay devolve o mesmo status da primeira resposta** (200, 202 ou 422), mudando só
+  `idempotentReplay: true`. Para o provedor, a 2ª chamada é indistinguível da 1ª.
+- **422 × 409 × 400:** 400 = a requisição nem pôde ser entendida (nada gravado); 409 = conflito com
+  algo que já existe; 422 = entendida, avaliada e **recusada pela regra** — fica gravada e auditável,
+  e o corpo traz `transactionId` e `failureCode`.
+- **Erros** sempre no formato `{ "error": { "code", "message" } }`; resultados de transação (inclusive
+  422) no formato do contrato, com `failureCode`.
+- **Id malformado** (não-UUID) = "não encontrado" (404), nunca 500.
+- **Valor como `number` no JSON é rejeitado** (400): `25.1` em JSON já é float.
 
 Transações rejeitadas também são **persistidas** (auditáveis) e geram evento.
 

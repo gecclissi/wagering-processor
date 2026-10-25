@@ -10,8 +10,12 @@ export const FailureCode = {
   MissingReference: 'MISSING_REFERENCE', // REFUND/ROLLBACK sem referência
   UnexpectedReference: 'UNEXPECTED_REFERENCE', // BET com referência
 
+  MissingIdempotencyKey: 'MISSING_IDEMPOTENCY_KEY',
+  InvalidCursor: 'INVALID_CURSOR',
+
   // ---- Recurso / conflito → não reenviar igual
   WalletNotFound: 'WALLET_NOT_FOUND',
+  TransactionNotFound: 'TRANSACTION_NOT_FOUND',
   WalletAlreadyExists: 'WALLET_ALREADY_EXISTS',
   IdempotencyConflict: 'IDEMPOTENCY_CONFLICT', // mesma key (ou mesmo id externo) com payload diferente
 
