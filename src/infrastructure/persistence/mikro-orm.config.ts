@@ -2,14 +2,14 @@ import { defineConfig } from '@mikro-orm/postgresql';
 import { Migrator } from '@mikro-orm/migrations';
 import { env } from '../../config/env';
 import { migrationsList } from './migrations';
+import { persistenceEntities } from './records';
 
 /** Configuração do MikroORM para um banco. Os testes usam a mesma, apontando para outro banco. */
 export function createMikroOrmConfig(clientUrl: string) {
   return defineConfig({
     clientUrl,
-    entities: [],
+    entities: persistenceEntities,
     extensions: [Migrator],
-    discovery: { warnWhenNoEntities: false },
     migrations: {
       migrationsList,
       tableName: 'mikro_orm_migrations',

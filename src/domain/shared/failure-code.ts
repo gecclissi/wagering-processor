@@ -10,6 +10,11 @@ export const FailureCode = {
   MissingReference: 'MISSING_REFERENCE', // REFUND/ROLLBACK sem referência
   UnexpectedReference: 'UNEXPECTED_REFERENCE', // BET com referência
 
+  // ---- Recurso / conflito → não reenviar igual
+  WalletNotFound: 'WALLET_NOT_FOUND',
+  WalletAlreadyExists: 'WALLET_ALREADY_EXISTS',
+  IdempotencyConflict: 'IDEMPOTENCY_CONFLICT', // mesma key (ou mesmo id externo) com payload diferente
+
   // ---- Regra de negócio → terminal, não adianta reenviar igual
   CurrencyMismatch: 'CURRENCY_MISMATCH',
   WalletMismatch: 'WALLET_MISMATCH', // player não é dono da wallet
