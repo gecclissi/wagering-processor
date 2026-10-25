@@ -5,6 +5,7 @@ import type { TransactionContext, UnitOfWork } from '../../application/ports';
 import {
   MikroOrmInboxRepository,
   MikroOrmLedgerRepository,
+  MikroOrmOutboxRepository,
   MikroOrmWagerTransactionRepository,
   MikroOrmWalletRepository,
 } from './mikro-orm.repositories';
@@ -31,6 +32,7 @@ export class MikroOrmUnitOfWork implements UnitOfWork {
           transactions: new MikroOrmWagerTransactionRepository(em),
           ledger: new MikroOrmLedgerRepository(em),
           inbox: new MikroOrmInboxRepository(em),
+          outbox: new MikroOrmOutboxRepository(em),
         });
       });
     } catch (error) {

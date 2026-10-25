@@ -14,15 +14,17 @@ import type {
   InboxRegistration,
   InboxRepository,
   LedgerRepository,
+  OutboxRepository,
   WagerTransactionRepository,
   WalletRepository,
 } from '../../application/ports';
 import { InboxMessage } from '../../domain/messaging/inbox-message';
+import type { OutboxMessage } from '../../domain/messaging/outbox-message';
 import type { WagerTransaction } from '../../domain/wager/wager-transaction';
 import type { Wallet } from '../../domain/wallet/wallet';
 import type { WalletLedgerEntry } from '../../domain/wallet/wallet-ledger-entry';
-import { LedgerEntryMapper, WagerTransactionMapper, WalletMapper } from './mappers';
-import { LedgerEntryRecord, WagerTransactionRecord, WalletRecord } from './records';
+import { LedgerEntryMapper, OutboxMapper, WagerTransactionMapper, WalletMapper } from './mappers';
+import { LedgerEntryRecord, OutboxRecord, WagerTransactionRecord, WalletRecord } from './records';
 import { isUuid } from './uuid';
 
 // Repositórios sobre o EntityManager de UMA transação (o `em` vem do UnitOfWork).
@@ -104,6 +106,17 @@ export class MikroOrmWagerTransactionRepository implements WagerTransactionRepos
     return this.findOne({ providerId, externalTransactionId });
   }
 
+  async findDuePendingReferences(now: Date, limit: number) {
+    // Usa o índice parcial wager_tx_pending_reference_idx. Sem lock aqui: quem
+    // processa trava a WALLET depois (mesma ordem de locks do fluxo principal).
+    const records = await this.em.find(
+      WagerTransactionRecord,
+      { status: 'PENDING_REFERENCE', nextReferenceAttemptAt: { $lte: now } },
+      { orderBy: { nextReferenceAttemptAt: 'asc' }, limit, fields: ['id', 'walletId'] },
+    );
+    return records.map((r) => ({ id: r.id, walletId: r.walletId }));
+  }
+
   async hasProcessedReversal(referenceTransactionId: string): Promise<boolean> {
     const count = await this.em.count(WagerTransactionRecord, {
       referenceTransactionId,
@@ -179,6 +192,44 @@ export class MikroOrmInboxRepository implements InboxRepository {
         processedAt: row.processed_at ?? undefined,
       }),
     };
+  }
+}
+
+export class MikroOrmOutboxRepository implements OutboxRepository {
+  constructor(private readonly em: EntityManager) {}
+
+  async add(messages: OutboxMessage[]): Promise<void> {
+    if (messages.length === 0) return;
+    await this.em.insertMany(OutboxRecord, messages.map(OutboxMapper.toRecord));
+  }
+
+  async claimDue(now: Date, limit: number): Promise<OutboxMessage[]> {
+    // SELECT ... FOR UPDATE SKIP LOCKED: cada publisher trava o SEU lote e
+    // PULA as linhas já travadas por outro — N instâncias publicam em paralelo
+    // sem pegar o mesmo evento e sem esperar umas pelas outras.
+    const records = await this.em.find(
+      OutboxRecord,
+      { publishedAt: null, nextAttemptAt: { $lte: now } },
+      {
+        orderBy: { occurredAt: 'asc', id: 'asc' },
+        limit,
+        lockMode: LockMode.PESSIMISTIC_PARTIAL_WRITE,
+        refresh: true,
+      },
+    );
+    return records.map(OutboxMapper.toDomain);
+  }
+
+  async save(message: OutboxMessage): Promise<void> {
+    await this.em.nativeUpdate(
+      OutboxRecord,
+      { id: message.id },
+      {
+        attempts: message.attempts,
+        nextAttemptAt: message.nextAttemptAt ?? message.occurredAt,
+        publishedAt: message.publishedAt ?? null,
+      },
+    );
   }
 }
 

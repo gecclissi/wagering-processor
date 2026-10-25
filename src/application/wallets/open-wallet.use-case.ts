@@ -1,7 +1,9 @@
 import { Money, type MoneyProps } from '../../domain/shared/money';
 import { WagerTransaction } from '../../domain/wager/wager-transaction';
 import { Wallet } from '../../domain/wallet/wallet';
+import { OutboxMessage } from '../../domain/messaging/outbox-message';
 import type { Clock, IdGenerator, UnitOfWork } from '../ports';
+import { eventsFor } from '../wagering/settle-transaction';
 
 export interface OpenWalletCommand {
   playerId: string;
@@ -63,6 +65,14 @@ export class OpenWalletUseCase {
         // Ordem importa por causa das FKs: wallet → transação → lançamento.
         await ctx.transactions.insert(opening);
         await ctx.ledger.append(openingEntry);
+
+        const correlationId = this.ids.next();
+        const events = eventsFor(opening, wallet, openingEntry, false, () => ({
+          eventId: this.ids.next(),
+          correlationId,
+          occurredAt: at,
+        }));
+        await ctx.outbox.add(events.map((event) => OutboxMessage.enqueue(event)));
       }
     });
 

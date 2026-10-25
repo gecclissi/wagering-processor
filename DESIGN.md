@@ -249,17 +249,52 @@ mesmo use case do HTTP). Se o registro existe, o efeito existe.
   fila com `visibility = 0` para outra instância pegar na hora.
 
 **Outbox (saída):** tabela `outbox_messages` gravada na mesma transação.
-O `OutboxPublisher` roda em todas as instâncias:
+O `RelayOutboxUseCase` roda em todas as instâncias (sem líder), a cada 500 ms ociosos:
 ```sql
+BEGIN;
 SELECT * FROM outbox_messages
- WHERE published_at IS NULL AND next_attempt_at <= now()
- ORDER BY occurred_at
- LIMIT 50
- FOR UPDATE SKIP LOCKED;     -- cada instância pega um lote diferente
+ WHERE published_at IS NULL AND next_attempt_at <= :now
+ ORDER BY occurred_at, id
+ LIMIT 10
+ FOR UPDATE SKIP LOCKED;     -- cada instância pega um lote diferente, sem esperar
+-- SendMessageBatch → wagering-events.fifo
+UPDATE ... published_at = now()   -- ou attempts++, next_attempt_at = backoff
+COMMIT;
 ```
-Publica → marca `published_at`. Se o processo morre antes de marcar, outra
-instância publica de novo → **at-least-once**; consumidores deduplicam pelo
-`eventId`.
+- **Eventos na mesma transação** do efeito (`settleTransaction`): falhou gravar a
+  outbox → rollback do débito também (testado). Nunca há evento de algo que não
+  aconteceu, nem efeito sem evento.
+- **At-least-once:** morreu depois de enviar e antes do COMMIT → lock liberado → outra
+  instância reenvia. Mitigação dupla: `MessageDeduplicationId = eventId` (SQS FIFO
+  descarta em 5 min) e o consumidor deduplica pelo `eventId`.
+- **Sem limite de tentativas** na publicação (backoff 1s → 60s): evento confirmado
+  nunca é descartado; atraso aparece como métrica de *outbox lag*.
+- **Trade-off:** a transação fica aberta durante o envio ao SQS (lote pequeno, ≤ 10).
+  Alternativa seria "lease" com coluna `claimed_until`; rejeitada por simplicidade.
+- **Ordem:** `MessageGroupId = aggregateId = walletId`. Com vários publishers, eventos
+  da mesma wallet podem sair fora de ordem entre lotes; `WalletBalanceChanged` leva
+  `walletVersion` para o consumidor descartar o mais antigo.
+
+**Eventos** (`domain/events`): classe abstrata `IntegrationEvent<T>` + uma subclasse
+por evento com `eventType`/`version` no tipo; `data` só com `MoneyProps`.
+
+| Desfecho | Eventos |
+|---|---|
+| `PROCESSED` com lançamento | `WagerTransactionProcessed` + `WalletBalanceChanged` |
+| `PROCESSED` sem lançamento (`LOSS`) | `WagerTransactionProcessed` |
+| `REJECTED` | `WagerTransactionRejected` |
+| entra em `PENDING_REFERENCE` (só a 1ª vez) | `WagerTransactionPendingReference` |
+| replay | nenhum (já foram emitidos) |
+
+`correlationId`: header `X-Correlation-Id` (HTTP), `messageId` (fila) ou gerado;
+`causationId`: `messageId` da fila.
+
+**Worker de `PENDING_REFERENCE`** (`RetryPendingReferencesUseCase`, a cada 1 s ocioso):
+lista as vencidas (índice parcial), e cada uma numa transação própria trava a
+**wallet primeiro** — mesma ordem de locks do fluxo principal, sem deadlock —, relê a
+transação (outra instância pode ter resolvido) e chama o mesmo `settleTransaction`
+da entrada. Esgotadas 10 tentativas (~13 min) → `REJECTED/REFERENCE_NOT_FOUND` +
+evento. Aqui não há SKIP LOCKED: o lock da wallet já serializa as instâncias.
 
 ---
 

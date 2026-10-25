@@ -12,6 +12,7 @@ export async function startHttpApp() {
     AppModule.register({
       databaseUrl: TEST_DATABASE_URL,
       sqsConsumer: { enabled: false, queueName: '', dlqName: '' },
+      workers: { enabled: false, eventsQueueName: '', outboxIdleMs: 0, pendingReferenceIdleMs: 0 },
     }),
     { logger: false },
   );

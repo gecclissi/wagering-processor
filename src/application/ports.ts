@@ -1,4 +1,5 @@
 import type { InboxMessage } from '../domain/messaging/inbox-message';
+import type { OutboxMessage } from '../domain/messaging/outbox-message';
 import type { Money } from '../domain/shared/money';
 import type { WagerTransaction } from '../domain/wager/wager-transaction';
 import type { Wallet } from '../domain/wallet/wallet';
@@ -23,6 +24,8 @@ export interface WagerTransactionRepository {
   findByExternalId(providerId: string, externalTransactionId: string): Promise<WagerTransaction | undefined>;
   /** Já existe REFUND/ROLLBACK PROCESSED apontando para esta transação? */
   hasProcessedReversal(referenceTransactionId: string): Promise<boolean>;
+  /** Ids (+ wallet) das PENDING_REFERENCE cuja próxima tentativa já venceu. Sem lock. */
+  findDuePendingReferences(now: Date, limit: number): Promise<{ id: string; walletId: string }[]>;
   /** Lança DuplicateTransactionError se bater nas UNIQUE de idempotência. */
   insert(transaction: WagerTransaction): Promise<void>;
   update(transaction: WagerTransaction): Promise<void>;
@@ -44,12 +47,28 @@ export interface InboxRepository {
   register(message: InboxMessage): Promise<InboxRegistration>;
 }
 
+export interface OutboxRepository {
+  add(messages: OutboxMessage[]): Promise<void>;
+  /**
+   * Trava e devolve até `limit` mensagens pendentes e vencidas, pulando as que
+   * outra instância já travou (FOR UPDATE SKIP LOCKED).
+   */
+  claimDue(now: Date, limit: number): Promise<OutboxMessage[]>;
+  save(message: OutboxMessage): Promise<void>;
+}
+
 /** Repositórios que compartilham UMA transação SQL. */
 export interface TransactionContext {
   wallets: WalletRepository;
   transactions: WagerTransactionRepository;
   ledger: LedgerRepository;
   inbox: InboxRepository;
+  outbox: OutboxRepository;
+}
+
+/** Envio dos eventos ao broker. Devolve os ids que FALHARAM (o resto foi aceito). */
+export interface EventPublisher {
+  publish(messages: OutboxMessage[]): Promise<{ failedIds: Set<string> }>;
 }
 
 /** Executa `work` dentro de uma transação: commit se terminar, rollback se lançar. */

@@ -12,6 +12,12 @@ async function bootstrap() {
         queueName: env.sqs.wagerQueue,
         dlqName: env.sqs.wagerDlq,
       },
+      workers: {
+        enabled: env.workersEnabled,
+        eventsQueueName: env.sqs.eventsQueue,
+        outboxIdleMs: 500,
+        pendingReferenceIdleMs: 1_000,
+      },
     }),
   );
   // Faz o Nest reagir a SIGTERM/SIGINT fechando conexões com calma (graceful shutdown).

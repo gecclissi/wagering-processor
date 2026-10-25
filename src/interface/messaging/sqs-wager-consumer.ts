@@ -171,7 +171,10 @@ export class SqsWagerConsumer {
         payloadHash: parsed.payloadHash,
         receivedAt: this.clock.now(),
       });
-      const result = await this.processWager.execute(parsed.command, { inbox });
+      const result = await this.processWager.execute(parsed.command, {
+        inbox,
+        correlationId: parsed.messageId,
+      });
       // PROCESSED, REJECTED (negócio, gravada) e PENDING_REFERENCE (o worker
       // continua daqui): em todos o banco já tem o registro → ack.
       return { action: 'ack', outcome: `${result.status}${result.idempotentReplay ? ', duplicate' : ''}` };

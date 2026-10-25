@@ -35,6 +35,7 @@ export class WageringController {
   @Post('wagering/transactions')
   async submit(
     @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Headers('x-correlation-id') correlationId: string | undefined,
     @Body() raw: unknown,
     @Res({ passthrough: true }) res: Response,
   ) {
@@ -53,7 +54,7 @@ export class WageringController {
       kind: requireString(body, 'kind'),
       money: requireMoney(body, 'money'),
       referenceExternalTransactionId: optionalString(body, 'referenceExternalTransactionId'),
-    });
+    }, { correlationId: correlationId?.trim() || undefined });
 
     res.status(statusForTransaction(result.status));
     return presentWagerResult(result);

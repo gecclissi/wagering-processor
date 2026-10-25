@@ -1,6 +1,5 @@
 import type { FailureCode } from '../../domain/shared/failure-code';
 import { Money, type MoneyProps } from '../../domain/shared/money';
-import { applyWagerTransaction } from '../../domain/wager/apply-wager-transaction';
 import {
   WagerTransaction,
   type WagerTransactionKind,
@@ -16,6 +15,7 @@ import {
 } from '../errors';
 import type { Clock, IdGenerator, TransactionContext, UnitOfWork } from '../ports';
 import { computePayloadHash } from './payload-hash';
+import { settleTransaction, type EventMeta } from './settle-transaction';
 
 /** Entrada comum a HTTP e SQS: os dois chamam ESTE use case. */
 export interface SubmitWagerTransactionCommand {
@@ -58,7 +58,7 @@ export function toWagerResult(tx: WagerTransaction, idempotentReplay: boolean): 
  *   2. idempotência (depois do lock, para enxergar a gêmea que acabou de commitar)
  *   3. resolve referência + "já foi revertida?"
  *   4. regras de domínio (applyWagerTransaction)
- *   5. INSERT transação, UPDATE wallet, INSERT ledger
+ *   5. INSERT transação, UPDATE wallet, INSERT ledger, INSERT outbox (eventos)
  * Wallets diferentes não se bloqueiam: o lock é por linha, nunca global.
  */
 export class ProcessWagerTransactionUseCase {
@@ -69,12 +69,13 @@ export class ProcessWagerTransactionUseCase {
   ) {}
 
   /**
-   * @param options.inbox  presente quando a entrada é a fila: o registro de inbox
-   *                       entra na MESMA transação SQL do efeito financeiro.
+   * @param options.inbox          presente quando a entrada é a fila: o registro de inbox
+   *                               entra na MESMA transação SQL do efeito financeiro.
+   * @param options.correlationId  rastreio ponta a ponta (header HTTP / messageId da fila).
    */
   async execute(
     command: SubmitWagerTransactionCommand,
-    options: { inbox?: InboxMessage } = {},
+    options: { inbox?: InboxMessage; correlationId?: string } = {},
   ): Promise<WagerTransactionResult> {
     // Validação do payload ANTES de tocar no banco: erro aqui é 400, sem efeito.
     const money = Money.from(command.money);
@@ -97,9 +98,13 @@ export class ProcessWagerTransactionUseCase {
 
     const { inbox } = options;
     inbox?.markProcessed(this.clock.now());
+    const meta: EventMeta = {
+      correlationId: options.correlationId ?? this.ids.next(),
+      causationId: inbox?.messageId,
+    };
 
     try {
-      return await this.uow.run((ctx) => this.process(ctx, transaction, inbox));
+      return await this.uow.run((ctx) => this.process(ctx, transaction, inbox, meta));
     } catch (error) {
       // Corrida perdida: uma gêmea com a mesma key/id externo commitou primeiro
       // (ex.: mesma key apontando para OUTRA wallet, logo sem lock em comum).
@@ -120,6 +125,7 @@ export class ProcessWagerTransactionUseCase {
     ctx: TransactionContext,
     tx: WagerTransaction,
     inbox: InboxMessage | undefined,
+    meta: EventMeta,
   ): Promise<WagerTransactionResult> {
     // 0) Inbox (só entrada SQS). Mensagem já tratada → o efeito já foi
     //    commitado junto com ela: devolve o resultado original, sem lock.
@@ -138,32 +144,8 @@ export class ProcessWagerTransactionUseCase {
     const twin = await this.findTwin(ctx, tx);
     if (twin) return this.replay(twin, tx);
 
-    // 3) Referência (por id do PROVEDOR) e se ela já foi revertida.
-    const reference = tx.referenceExternalTransactionId
-      ? await ctx.transactions.findByExternalId(tx.providerId, tx.referenceExternalTransactionId)
-      : undefined;
-    const referenceAlreadyReversed =
-      reference !== undefined && tx.isReversal()
-        ? await ctx.transactions.hasProcessedReversal(reference.id)
-        : false;
-
-    // 4) Regras de negócio (puras, em memória).
-    const previousVersion = wallet.version;
-    const entry = applyWagerTransaction({
-      transaction: tx,
-      wallet,
-      reference,
-      referenceAlreadyReversed,
-      entryId: this.ids.next(),
-      at: this.clock.now(),
-    });
-
-    // 5) Persistência — na ordem exigida pelas FKs.
-    await ctx.transactions.insert(tx);
-    if (entry) {
-      await ctx.wallets.update(wallet, previousVersion);
-      await ctx.ledger.append(entry);
-    }
+    // 3–5) Referência, regras, persistência e eventos na outbox (mesma transação).
+    await settleTransaction(ctx, tx, wallet, { ids: this.ids, clock: this.clock }, meta, 'insert');
     return toWagerResult(tx, false);
   }
 

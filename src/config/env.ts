@@ -12,6 +12,7 @@ function required(name: string): string {
 export const env = {
   port: Number(process.env.PORT ?? 3000),
   databaseUrl: required('DATABASE_URL'),
+  workersEnabled: (process.env.WORKERS_ENABLED ?? 'true') === 'true',
   aws: {
     region: process.env.AWS_REGION ?? 'us-east-1',
     endpoint: process.env.AWS_ENDPOINT,

@@ -7,7 +7,8 @@ import {
 } from '../../domain/wager/wager-transaction';
 import { Wallet } from '../../domain/wallet/wallet';
 import { WalletLedgerEntry, type LedgerDirection } from '../../domain/wallet/wallet-ledger-entry';
-import type { LedgerEntryRecord, WagerTransactionRecord, WalletRecord } from './records';
+import { OutboxMessage } from '../../domain/messaging/outbox-message';
+import type { LedgerEntryRecord, OutboxRecord, WagerTransactionRecord, WalletRecord } from './records';
 
 // Conversão linha ⇄ domínio. Leitura usa sempre `rehydrate` (não revalida transições).
 
@@ -93,6 +94,33 @@ export const WagerTransactionMapper = {
       referenceExternalTransactionId: t.referenceExternalTransactionId ?? null,
       createdAt: t.createdAt,
       ...WagerTransactionMapper.toMutableFields(t),
+    };
+  },
+};
+
+export const OutboxMapper = {
+  toDomain(r: OutboxRecord): OutboxMessage {
+    return OutboxMessage.rehydrate({
+      id: r.id,
+      aggregateId: r.aggregateId,
+      eventType: r.eventType,
+      payload: r.payload,
+      occurredAt: r.occurredAt,
+      attempts: r.attempts,
+      nextAttemptAt: r.nextAttemptAt,
+      publishedAt: nullable(r.publishedAt),
+    });
+  },
+  toRecord(m: OutboxMessage) {
+    return {
+      id: m.id,
+      aggregateId: m.aggregateId,
+      eventType: m.eventType,
+      payload: m.payload as Record<string, unknown>,
+      occurredAt: m.occurredAt,
+      attempts: m.attempts,
+      nextAttemptAt: m.nextAttemptAt ?? m.occurredAt,
+      publishedAt: m.publishedAt ?? null,
     };
   },
 };

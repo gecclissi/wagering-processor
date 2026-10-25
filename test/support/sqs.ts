@@ -1,5 +1,6 @@
 import {
   CreateQueueCommand,
+  DeleteMessageCommand,
   DeleteQueueCommand,
   GetQueueAttributesCommand,
   ReceiveMessageCommand,
@@ -74,6 +75,39 @@ export async function peek(queueUrl: string) {
     }),
   );
   return Messages;
+}
+
+export async function createFifoQueue(prefix: string) {
+  const { QueueUrl } = await sqs.send(
+    new CreateQueueCommand({
+      QueueName: `${prefix}-${crypto.randomUUID().slice(0, 8)}.fifo`,
+      Attributes: { FifoQueue: 'true' },
+    }),
+  );
+  return {
+    url: QueueUrl!,
+    destroy: () => sqs.send(new DeleteQueueCommand({ QueueUrl })),
+  };
+}
+
+/** Consome TUDO (recebe e apaga). Na FIFO, o próximo do grupo só vem depois de apagar o anterior. */
+export async function drain(queueUrl: string): Promise<{ body: Record<string, unknown>; eventType?: string }[]> {
+  const out: { body: Record<string, unknown>; eventType?: string }[] = [];
+  for (;;) {
+    const { Messages = [] } = await sqs.send(
+      new ReceiveMessageCommand({
+        QueueUrl: queueUrl,
+        MaxNumberOfMessages: 10,
+        WaitTimeSeconds: 1,
+        MessageAttributeNames: ['All'],
+      }),
+    );
+    if (Messages.length === 0) return out;
+    for (const m of Messages) {
+      out.push({ body: JSON.parse(m.Body!), eventType: m.MessageAttributes?.eventType?.StringValue });
+      await sqs.send(new DeleteMessageCommand({ QueueUrl: queueUrl, ReceiptHandle: m.ReceiptHandle }));
+    }
+  }
 }
 
 export function wagerEnvelope(data: Record<string, unknown>, messageId = `msg-${crypto.randomUUID()}`) {
