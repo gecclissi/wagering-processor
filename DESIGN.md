@@ -1,7 +1,8 @@
 # Design — Distributed Wagering Processor
 
-> O mapa do projeto. Serve para construir e para apresentar.
-> Decisões detalhadas e trade-offs vão para o `ARCHITECTURE.md` ao final.
+> Caderno de construção: o mapa usado durante o desenvolvimento, na ordem em que as
+> peças foram feitas. **A referência final é o [`ARCHITECTURE.md`](ARCHITECTURE.md)**
+> (decisões, trade-offs e limitações) — onde os dois divergirem, vale o ARCHITECTURE.
 
 ---
 
