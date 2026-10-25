@@ -2,6 +2,7 @@ import { GetQueueUrlCommand, type SQSClient } from '@aws-sdk/client-sqs';
 import type { BeforeApplicationShutdown, OnApplicationBootstrap } from '@nestjs/common';
 import type { Clock } from '../../application/ports';
 import type { ProcessWagerTransactionUseCase } from '../../application/wagering/process-wager-transaction.use-case';
+import type { Metrics } from '../../infrastructure/observability/metrics';
 import { SqsWagerConsumer } from './sqs-wager-consumer';
 
 export interface SqsConsumerServiceOptions {
@@ -26,6 +27,7 @@ export class SqsConsumerService implements OnApplicationBootstrap, BeforeApplica
     private readonly processWager: ProcessWagerTransactionUseCase,
     private readonly clock: Clock,
     private readonly options: SqsConsumerServiceOptions,
+    private readonly metrics: Metrics,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -43,7 +45,7 @@ export class SqsConsumerService implements OnApplicationBootstrap, BeforeApplica
       retryBaseSeconds: 2,
       retryMaxSeconds: 60,
       shutdownTimeoutMs: 10_000,
-    });
+    }, this.metrics);
     this.consumer.start();
   }
 

@@ -37,7 +37,7 @@ export class MikroOrmUnitOfWork implements UnitOfWork {
       });
     } catch (error) {
       if (error instanceof ConnectionException) {
-        throw new TransientError('Database unavailable', { cause: error });
+        throw new TransientError('Database unavailable', 'database_unavailable', { cause: error });
       }
       throw error;
     }

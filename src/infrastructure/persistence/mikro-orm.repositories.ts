@@ -36,8 +36,11 @@ const constraintOf = (error: unknown) => (error as { constraint?: string }).cons
 
 /** Lock/deadlock são falhas transitórias: seguro tentar de novo. */
 export function translateTransient(error: unknown): never {
-  if (error instanceof LockWaitTimeoutException || error instanceof DeadlockException) {
-    throw new TransientError('Database lock contention', { cause: error });
+  if (error instanceof LockWaitTimeoutException) {
+    throw new TransientError('Timed out waiting for wallet lock', 'lock_timeout', { cause: error });
+  }
+  if (error instanceof DeadlockException) {
+    throw new TransientError('Deadlock detected', 'deadlock', { cause: error });
   }
   throw error;
 }
@@ -85,7 +88,10 @@ export class MikroOrmWalletRepository implements WalletRepository {
       { balance: wallet.balance.amount, version: wallet.version, updatedAt: wallet.updatedAt },
     );
     if (affected !== 1) {
-      throw new TransientError(`Wallet ${wallet.id} changed concurrently (expected version ${previousVersion})`);
+      throw new TransientError(
+        `Wallet ${wallet.id} changed concurrently (expected version ${previousVersion})`,
+        'version_conflict',
+      );
     }
   }
 }

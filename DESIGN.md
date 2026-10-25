@@ -347,6 +347,41 @@ outbox_messages       id PK, aggregate_id, event_type, payload jsonb,
 
 ---
 
+## 12.1 Observabilidade
+
+**Logs** (`infrastructure/observability/json-logger.ts`): uma linha JSON por evento,
+substituindo o logger do Nest (`time`, `level`, `context`, `msg` + campos).
+- **Contexto assíncrono** (`AsyncLocalStorage`): HTTP (middleware), consumer (por
+  mensagem) e workers abrem um contexto; tudo logado lá dentro sai com `correlationId`,
+  `messageId`, `transactionId`, `walletId`, `providerId` — sem passar parâmetro.
+- `correlationId`: header `X-Correlation-Id` (validado: só `[A-Za-z0-9._:-]`, ≤128, contra
+  *log injection*) ou gerado; devolvido no header da resposta e propagado aos eventos.
+- **Sem valores financeiros nem payloads**: chaves como `amount`, `money`, `balance`,
+  `payload`, `body`, `authorization` são substituídas por `[redacted]` mesmo se
+  passadas por engano. Ids bastam para correlacionar; o valor está no banco.
+- Use cases **não logam**: quem loga e mede são as bordas (HTTP, consumer, workers).
+
+**Métricas** (Prometheus, `GET /metrics`, registry próprio por app):
+
+| Exigência | Métrica |
+|---|---|
+| transações por status | `wagering_transactions_total{status,kind,source}` (sem replays) |
+| duplicatas | `wagering_duplicates_total{source}` |
+| retries | `wagering_retries_total{operation,reason}` |
+| DLQ | `wagering_dlq_messages_total{code}` + `wagering_dlq_depth` (inclui redrive) |
+| conflitos de lock | `wagering_lock_conflicts_total{reason}` (lock_timeout, deadlock, version_conflict) |
+| outbox lag | `wagering_outbox_lag_seconds`, `wagering_outbox_pending` |
+| latência | `wagering_processing_duration_seconds{source}`, `http_request_duration_seconds{method,route,status}` |
+| extra | `wagering_errors_total{code,source}`, `wagering_reconciliation_divergences_total`, `wagering_outbox_published_total` |
+
+- Gauges de outbox e DLQ são calculados **no scrape**, direto da fonte da verdade
+  (SELECT na outbox, `GetQueueAttributes` na DLQ) — não dependem de qual instância
+  fez o trabalho. SQS fora: mantém o último valor em vez de derrubar o `/metrics`.
+- Labels de baixa cardinalidade: rota com parâmetro (`/wallets/:walletId`), nunca ids.
+- `/metrics` aberto como os health checks: é para o scraper interno (rede privada).
+
+---
+
 ## 13. Fora de escopo (decidido)
 
 - **Autenticação:** só `AuthGuard` no-op + desenho documentado (Keycloak/OIDC).

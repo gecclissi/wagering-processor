@@ -1,4 +1,7 @@
-import { Body, Controller, Get, Headers, Inject, Param, Post, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Inject, Logger, Param, Post, Res, UseGuards } from '@nestjs/common';
+import { addLogContext, currentLogContext } from '../../infrastructure/observability/log-context';
+import { Metrics } from '../../infrastructure/observability/metrics';
+import { recordWagerOutcome } from '../../infrastructure/observability/record-outcome';
 import type { Response } from 'express';
 import { TransactionNotFoundError } from '../../application/errors';
 import type { WalletReadRepository } from '../../application/ports';
@@ -22,9 +25,12 @@ class MissingIdempotencyKeyError extends DomainError {
 @Controller()
 @UseGuards(ProviderAuthGuard)
 export class WageringController {
+  private readonly logger = new Logger('WageringController');
+
   constructor(
     private readonly processWager: ProcessWagerTransactionUseCase,
     @Inject(WALLET_READS) private readonly reads: WalletReadRepository,
+    private readonly metrics: Metrics,
   ) {}
 
   /**
@@ -35,7 +41,6 @@ export class WageringController {
   @Post('wagering/transactions')
   async submit(
     @Headers('idempotency-key') idempotencyKey: string | undefined,
-    @Headers('x-correlation-id') correlationId: string | undefined,
     @Body() raw: unknown,
     @Res({ passthrough: true }) res: Response,
   ) {
@@ -43,7 +48,7 @@ export class WageringController {
     if (!idempotencyKey?.trim()) throw new MissingIdempotencyKeyError();
 
     const body = requireObject(raw);
-    const result = await this.processWager.execute({
+    const command = {
       idempotencyKey: idempotencyKey.trim(),
       providerId: requireString(body, 'providerId'),
       externalTransactionId: requireString(body, 'externalTransactionId'),
@@ -54,7 +59,24 @@ export class WageringController {
       kind: requireString(body, 'kind'),
       money: requireMoney(body, 'money'),
       referenceExternalTransactionId: optionalString(body, 'referenceExternalTransactionId'),
-    }, { correlationId: correlationId?.trim() || undefined });
+    };
+    addLogContext({ providerId: command.providerId, walletId: command.walletId });
+
+    const started = performance.now();
+    const result = await this.processWager.execute(command, {
+      // Aberto pelo middleware (header X-Correlation-Id ou gerado).
+      correlationId: currentLogContext().correlationId,
+    });
+
+    addLogContext({ transactionId: result.transactionId });
+    recordWagerOutcome(this.metrics, result, command.kind, 'http', started);
+    this.logger.log({
+      msg: 'wager transaction submitted',
+      kind: command.kind,
+      status: result.status,
+      failureCode: result.failureCode,
+      idempotentReplay: result.idempotentReplay,
+    });
 
     res.status(statusForTransaction(result.status));
     return presentWagerResult(result);

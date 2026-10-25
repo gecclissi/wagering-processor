@@ -60,8 +60,15 @@ export class DuplicateTransactionError extends Error {
  * (lock_timeout, version divergente, conexão). Seguro tentar de novo.
  */
 export class TransientError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
+  constructor(
+    message: string,
+    /** Motivo estável, usado em métricas (ex.: conflitos de lock). */
+    readonly reason: TransientReason = 'other',
+    options?: { cause?: unknown },
+  ) {
     super(message, options);
     this.name = new.target.name;
   }
 }
+
+export type TransientReason = 'lock_timeout' | 'deadlock' | 'version_conflict' | 'database_unavailable' | 'other';

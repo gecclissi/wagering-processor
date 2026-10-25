@@ -9,6 +9,7 @@ import {
 import type { Response } from 'express';
 import { TransientError } from '../../application/errors';
 import { DomainError } from '../../domain/shared/domain-error';
+import { Metrics } from '../../infrastructure/observability/metrics';
 import { statusForCode } from './error-mapping';
 
 /** Formato único de erro em toda a API. */
@@ -26,9 +27,13 @@ const RETRY_AFTER_SECONDS = 1;
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger('HttpExceptionFilter');
 
+  constructor(private readonly metrics: Metrics) {}
+
   catch(error: unknown, host: ArgumentsHost): void {
     const res = host.switchToHttp().getResponse<Response>();
     const { status, body } = this.toResponse(error);
+    this.metrics.errors.inc({ code: body.error.code, source: 'http' });
+    if (error instanceof TransientError) this.metrics.transient('http', error.reason);
     if (status === HttpStatus.SERVICE_UNAVAILABLE) res.setHeader('Retry-After', String(RETRY_AFTER_SECONDS));
     res.status(status).json(body);
   }
@@ -40,7 +45,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     }
     // Banco ocupado/indisponível: seguro reenviar com a MESMA Idempotency-Key.
     if (error instanceof TransientError) {
-      this.logger.warn(`Transient failure: ${error.message}`);
+      this.logger.warn({ msg: 'transient failure', reason: error.reason, error: error.message });
       return {
         status: HttpStatus.SERVICE_UNAVAILABLE,
         body: this.body('TEMPORARILY_UNAVAILABLE', 'Temporary failure, retry with the same Idempotency-Key'),

@@ -51,7 +51,7 @@ function flakyUow(failures: number): UnitOfWork {
   return {
     run: (work) => {
       calls += 1;
-      if (calls <= failures) return Promise.reject(new TransientError('database unavailable (simulated)'));
+      if (calls <= failures) return Promise.reject(new TransientError('database unavailable (simulated)', 'database_unavailable'));
       return app.uow.run(work);
     },
   };

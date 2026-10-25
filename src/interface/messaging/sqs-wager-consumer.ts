@@ -13,6 +13,9 @@ import type { ProcessWagerTransactionUseCase } from '../../application/wagering/
 import { InboxMessage } from '../../domain/messaging/inbox-message';
 import { exponentialBackoffMs } from '../../domain/shared/backoff';
 import { DomainError } from '../../domain/shared/domain-error';
+import { addLogContext, runWithLogContext } from '../../infrastructure/observability/log-context';
+import { Metrics } from '../../infrastructure/observability/metrics';
+import { recordWagerOutcome } from '../../infrastructure/observability/record-outcome';
 import { parseWagerMessage } from './wager-message';
 
 export interface SqsWagerConsumerConfig {
@@ -39,8 +42,8 @@ export interface SqsWagerConsumerConfig {
  */
 export type Decision =
   | { action: 'ack'; outcome: string }
-  | { action: 'retry'; delaySeconds: number; reason: string }
-  | { action: 'dlq'; reason: string };
+  | { action: 'retry'; delaySeconds: number; retryReason: string; reason: string }
+  | { action: 'dlq'; code: string; reason: string };
 
 export class SqsWagerConsumer {
   private readonly logger = new Logger('SqsWagerConsumer');
@@ -55,13 +58,14 @@ export class SqsWagerConsumer {
     private readonly processWager: ProcessWagerTransactionUseCase,
     private readonly clock: Clock,
     private readonly config: SqsWagerConsumerConfig,
+    private readonly metrics: Metrics = new Metrics(),
   ) {}
 
   start(): void {
     if (this.running) return;
     this.running = true;
     this.loop = this.runLoop();
-    this.logger.log(`Consuming ${this.config.queueUrl}`);
+    this.logger.log({ msg: 'consumer started', queueUrl: this.config.queueUrl });
   }
 
   /**
@@ -86,7 +90,7 @@ export class SqsWagerConsumer {
     // Prazo estourado: devolve as que sobraram e sai SEM esperar por elas.
     // Se alguma ainda commitar depois, a redelivery cai na inbox como duplicata.
     const leftovers = pending.filter((receipt) => this.inFlight.has(receipt));
-    this.logger.warn(`Shutdown timeout: returning ${leftovers.length} message(s) to the queue`);
+    this.logger.warn({ msg: 'shutdown timeout, returning messages to the queue', count: leftovers.length });
     await Promise.allSettled(leftovers.map((receipt) => this.changeVisibility(receipt, 0)));
   }
 
@@ -96,7 +100,7 @@ export class SqsWagerConsumer {
         await this.pollOnce();
       } catch (error) {
         if (!this.running) break; // poll abortado pelo stop()
-        this.logger.error(`Polling failed: ${(error as Error).message}`);
+        this.logger.error({ msg: 'polling failed', error: (error as Error).message });
         await Bun.sleep(1_000); // SQS fora do ar: não martelar
       }
     }
@@ -137,27 +141,32 @@ export class SqsWagerConsumer {
     await work;
   }
 
-  private async handle(message: Message): Promise<void> {
-    const decision = await this.decide(message);
-    const receipt = message.ReceiptHandle!;
-    const sqsId = message.MessageId;
+  private handle(message: Message): Promise<void> {
+    // Contexto de log por mensagem: todo log daqui para dentro sai com os ids dela.
+    return runWithLogContext({ sqsMessageId: message.MessageId }, async () => {
+      const decision = await this.decide(message);
+      const receipt = message.ReceiptHandle!;
 
-    switch (decision.action) {
-      case 'ack':
-        // Só chega aqui DEPOIS do commit (o use case retornou).
-        await this.delete(receipt);
-        this.logger.log(`Message ${sqsId} acked (${decision.outcome})`);
-        break;
-      case 'retry':
-        await this.changeVisibility(receipt, decision.delaySeconds);
-        this.logger.warn(`Message ${sqsId} will retry in ${decision.delaySeconds}s: ${decision.reason}`);
-        break;
-      case 'dlq':
-        await this.sendToDlq(message, decision.reason);
-        await this.delete(receipt);
-        this.logger.error(`Message ${sqsId} sent to DLQ: ${decision.reason}`);
-        break;
-    }
+      switch (decision.action) {
+        case 'ack':
+          // Só chega aqui DEPOIS do commit (o use case retornou).
+          await this.delete(receipt);
+          this.logger.log({ msg: 'message acked', outcome: decision.outcome });
+          break;
+        case 'retry':
+          await this.changeVisibility(receipt, decision.delaySeconds);
+          this.metrics.transient('sqs_consume', decision.retryReason);
+          this.logger.warn({ msg: 'message will retry', delaySeconds: decision.delaySeconds, error: decision.reason });
+          break;
+        case 'dlq':
+          await this.sendToDlq(message, decision.reason);
+          await this.delete(receipt);
+          this.metrics.dlqMessages.inc({ code: decision.code });
+          this.metrics.errors.inc({ code: decision.code, source: 'sqs' });
+          this.logger.error({ msg: 'message sent to DLQ', code: decision.code, error: decision.reason });
+          break;
+      }
+    });
   }
 
   /** Processa e classifica o resultado. Nunca lança. */
@@ -165,16 +174,25 @@ export class SqsWagerConsumer {
     const receiveCount = Number(message.Attributes?.ApproximateReceiveCount ?? '1');
     try {
       const parsed = parseWagerMessage(message.Body);
+      addLogContext({
+        messageId: parsed.messageId,
+        correlationId: parsed.messageId,
+        providerId: parsed.command.providerId,
+        walletId: parsed.command.walletId,
+      });
       const inbox = InboxMessage.receive({
         messageId: parsed.messageId,
         consumerName: this.config.consumerName,
         payloadHash: parsed.payloadHash,
         receivedAt: this.clock.now(),
       });
+      const started = performance.now();
       const result = await this.processWager.execute(parsed.command, {
         inbox,
         correlationId: parsed.messageId,
       });
+      addLogContext({ transactionId: result.transactionId });
+      recordWagerOutcome(this.metrics, result, parsed.command.kind, 'sqs', started);
       // PROCESSED, REJECTED (negócio, gravada) e PENDING_REFERENCE (o worker
       // continua daqui): em todos o banco já tem o registro → ack.
       return { action: 'ack', outcome: `${result.status}${result.idempotentReplay ? ', duplicate' : ''}` };
@@ -187,7 +205,7 @@ export class SqsWagerConsumer {
     // Erro de domínio que NÃO virou transação gravada: payload inválido, wallet
     // inexistente, conflito de idempotência/messageId. Repetir dá o mesmo erro.
     if (error instanceof DomainError) {
-      return { action: 'dlq', reason: `${error.code}: ${error.message}` };
+      return { action: 'dlq', code: error.code, reason: `${error.code}: ${error.message}` };
     }
     // Transitório (banco ocupado/fora) ou inesperado: tenta de novo com backoff.
     // Erro inesperado também entra aqui — se for bug, o maxReceiveCount o leva à DLQ.
@@ -199,6 +217,7 @@ export class SqsWagerConsumer {
     return {
       action: 'retry',
       delaySeconds: Math.round(delayMs / 1_000),
+      retryReason: error instanceof TransientError ? error.reason : 'unexpected',
       reason: `${kind}: ${(error as Error)?.message ?? String(error)}`,
     };
   }

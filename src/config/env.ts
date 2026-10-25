@@ -11,6 +11,7 @@ function required(name: string): string {
 
 export const env = {
   port: Number(process.env.PORT ?? 3000),
+  logLevel: process.env.LOG_LEVEL ?? 'info',
   databaseUrl: required('DATABASE_URL'),
   workersEnabled: (process.env.WORKERS_ENABLED ?? 'true') === 'true',
   aws: {

@@ -11,9 +11,12 @@ import { MikroOrmUnitOfWork } from '../../src/infrastructure/persistence/mikro-o
 import { SystemClock, UuidV7Generator } from '../../src/infrastructure/system';
 import { TEST_DATABASE_URL, createTestDatabase } from './database';
 
-/** Use cases reais ligados ao PostgreSQL real do banco de teste. */
-export async function createTestApp() {
-  await createTestDatabase();
+/**
+ * Use cases reais ligados ao PostgreSQL real do banco de teste.
+ * `recreate: false` reaproveita o banco já criado (outro app do mesmo arquivo está usando).
+ */
+export async function createTestApp(options: { recreate?: boolean } = {}) {
+  if (options.recreate ?? true) await createTestDatabase();
   const orm = await MikroORM.init({
     ...createMikroOrmConfig(TEST_DATABASE_URL),
     pool: { min: 2, max: 20 },

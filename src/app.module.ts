@@ -17,7 +17,10 @@ import { SQS_CLIENT, sqsClientProvider } from './infrastructure/messaging/sqs.cl
 import { createMikroOrmConfig } from './infrastructure/persistence/mikro-orm.config';
 import { MikroOrmWalletReadRepository } from './infrastructure/persistence/mikro-orm.read-repository';
 import { MikroOrmUnitOfWork } from './infrastructure/persistence/mikro-orm.unit-of-work';
-import { LoggingReconciliationAlert } from './infrastructure/reconciliation-alert';
+import { createCollectors } from './infrastructure/observability/collectors';
+import { Metrics } from './infrastructure/observability/metrics';
+import { ObservableReconciliationAlert } from './infrastructure/reconciliation-alert';
+import { MetricsController } from './interface/http/metrics.controller';
 import { SystemClock, UuidV7Generator } from './infrastructure/system';
 import { ProviderAuthGuard } from './interface/http/auth.guard';
 import { HealthController } from './interface/http/health.controller';
@@ -49,7 +52,7 @@ export class AppModule {
     return {
       module: AppModule,
       imports: [MikroOrmModule.forRoot(createMikroOrmConfig(options.databaseUrl))],
-      controllers: [HealthController, WalletsController, WageringController],
+      controllers: [HealthController, MetricsController, WalletsController, WageringController],
       providers: [
         sqsClientProvider,
         ProviderAuthGuard,
@@ -58,7 +61,18 @@ export class AppModule {
         // ---- portas → implementações
         { provide: CLOCK, useClass: SystemClock },
         { provide: ID_GENERATOR, useClass: UuidV7Generator },
-        { provide: RECONCILIATION_ALERT, useClass: LoggingReconciliationAlert },
+        {
+          // Métricas: um registry por aplicação; gauges de outbox/DLQ consultam a fonte no scrape.
+          provide: Metrics,
+          inject: [MikroORM, SQS_CLIENT],
+          useFactory: (orm: MikroORM, sqs: SQSClient) =>
+            new Metrics(createCollectors(orm.em, sqs, options.sqsConsumer.dlqName || undefined)),
+        },
+        {
+          provide: RECONCILIATION_ALERT,
+          inject: [Metrics],
+          useFactory: (metrics: Metrics) => new ObservableReconciliationAlert(metrics),
+        },
         {
           provide: UNIT_OF_WORK,
           inject: [MikroORM],
@@ -105,15 +119,15 @@ export class AppModule {
         // Entrada pela fila: MESMO use case da entrada HTTP.
         {
           provide: SqsConsumerService,
-          inject: [SQS_CLIENT, ProcessWagerTransactionUseCase, CLOCK],
-          useFactory: (sqs: SQSClient, processWager: ProcessWagerTransactionUseCase, clock: Clock) =>
-            new SqsConsumerService(sqs, processWager, clock, options.sqsConsumer),
+          inject: [SQS_CLIENT, ProcessWagerTransactionUseCase, CLOCK, Metrics],
+          useFactory: (sqs: SQSClient, processWager: ProcessWagerTransactionUseCase, clock: Clock, metrics: Metrics) =>
+            new SqsConsumerService(sqs, processWager, clock, options.sqsConsumer, metrics),
         },
         {
           provide: WorkersService,
-          inject: [RelayOutboxUseCase, RetryPendingReferencesUseCase],
-          useFactory: (relay: RelayOutboxUseCase, retry: RetryPendingReferencesUseCase) =>
-            new WorkersService(relay, retry, options.workers),
+          inject: [RelayOutboxUseCase, RetryPendingReferencesUseCase, Metrics],
+          useFactory: (relay: RelayOutboxUseCase, retry: RetryPendingReferencesUseCase, metrics: Metrics) =>
+            new WorkersService(relay, retry, metrics, options.workers),
         },
       ],
     };
