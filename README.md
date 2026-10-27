@@ -148,3 +148,10 @@ Observações:
 - Autenticação **não implementada** (decisão de escopo): ponto de extensão em
   [`ProviderAuthGuard`](src/interface/http/auth.guard.ts); desenho em `ARCHITECTURE.md`.
 - O LocalStack está fixado na versão `4.4`: imagens mais novas exigem auth token.
+
+## Sobre o desenvolvimento
+
+Este projeto foi desenvolvido com apoio de IA (Claude) como par de programação. As decisões
+de arquitetura foram discutidas, revisadas e validadas por testes automatizados — inclusive
+removendo proteções de propósito para confirmar que os testes falham sem elas — e estão
+justificadas no [`ARCHITECTURE.md`](ARCHITECTURE.md).
